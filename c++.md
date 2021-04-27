@@ -43,6 +43,38 @@ const数据成员,只在某个对象生存期内是常量，而对于整个类�
 
 C/C++中的volatile关键字和const对应，用来修饰变量，用于告诉编译器该变量值是不稳定的，可能被更改。
 
+在 C/C++ 中，对 `volatile` 对象的访问，有编译器优化上的副作用：
+
+- 不允许被优化消失（optimized out）；
+- 于序列上在另一个对 `volatile` 对象的访问之前。
+
+**这里提及的「不允许被优化」表示对 `volatile` 变量的访问，编译器不能做任何假设和推理，都必须按部就班地与「内存」进行交互。**因此，上述例中「复用寄存器中的值」就是不允许的。
+
+cpu为了提高流水线的运行效率，会做出比如：
+
+1. 对无依赖的前后指令做适当的乱序和调度；
+
+2. 对控制依赖的指令做分支预测；
+
+3. 对读取内存等的耗时操作，做提前预读；
+
+   等等。以上总总，都会导致指令乱序的可能。
+
+从多核的视角上来说，是存在着乱序的可能的。比如，假设存在变量x = 0，cpu0上执行写入W0(x, 1)，对x写入1。接着在cpu1上，执行读取R1(x, 0)，得到x = 0，这在x86和arm/power的cpu上都是可能出现的。原因是x86上cpu核和cache以及内存之间，存在着store buffer，当W0(x, 1)执行成功后，修改只存在于store buffer中，并未写到cache以及内存上，因此cpu1读取不到最新的x值。对于arm/power来说，同样也有store buffer，而且还可能会有invalid queue，导致cpu1读不到最新的x值。
+
+> 对于没有invalid queue的x86系列cpu来说，当修改从store buffer刷入cache时，就能够保证在其他核上能够读到最新的修改。但是，对于存在invalid queue的cpu来说，则不一定。
+
+为了能够保证多核之间的修改的可见性，我们在写程序的时候需要加上内存屏障，例如x86上的mfence指令。
+
+Intel为此提供三种内存屏障指令：
+
+- sfence ，实现Store Barrior 会将store buffer中缓存的修改刷入L1 cache中，使得其他cpu核可以观察到这些修改，而且之后的写操作不会被调度到之前，即sfence之前的写操作一定在sfence完成且全局可见；
+- lfence ，实现Load Barrior 会将invalidate queue失效，强制读取入L1 cache中，而且lfence之后的读操作不会被调度到之前，即lfence之前的读操作一定在lfence完成（并未规定全局可见性）；
+- mfence ，实现Full Barrior 同时刷新store buffer和invalidate queue，保证了mfence前后的读写操作的顺序，同时要求mfence之后写操作结果全局可见之前，mfence之前写操作结果全局可见；
+- lock 用来修饰当前指令操作的内存只能由当前CPU使用，若指令不操作内存仍然由用，因为这个修饰会让指令操作本身原子化，而且自带Full Barrior效果；还有指令比如IO操作的指令、exch等原子交换的指令，任何带有lock前缀的指令以及CPUID等指令都有内存屏障的作用。
+
+
+
 https://blog.csdn.net/fengbingchun/article/details/104109696
 
 
